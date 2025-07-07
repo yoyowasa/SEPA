@@ -1,5 +1,0 @@
-symbol,Close,52w_High,52w_Low,RS_26w,EPS_G%,REV_G%,date,entry,exit,risk_pct,stop_price
-FSLR,156.8,173.68,59.6,2.4,55.1,26.7,2023-01-06,True,False,,
-SMCI,8.44,9.52,3.41,2.0,65.3,110.4,2023-01-06,True,False,,
-FSLR,,,,,,,2023-01-27,False,True,0.01,
-SMCI,,,,,,,2023-01-27,False,True,0.01,
