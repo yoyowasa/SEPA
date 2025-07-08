@@ -115,35 +115,51 @@ def send_discord(
 
 
 # ──────────────────────────── yfinance 可用チェック ────────────────────────────
-def filter_available_tickers(tickers: list[str]) -> list[str]:
+# ──────────────────────────── yfinance 可用チェック ────────────────────────────
+def filter_available_tickers(tickers: list[str], retries: int = 3) -> list[str]:
+    """
+    終値 NaN のティッカーを除外する。
+    JSONDecodeError / 5xx エラーが出たときは最大 `retries` 回リトライ。
+    """
+    import time, yfinance as yf
+
     yf_tickers = [SPECIAL_MAP.get(t, t) for t in tickers]
     good, bad = [], []
 
     for i in range(0, len(yf_tickers), MAX_CHECK_CHUNK):
         chunk = yf_tickers[i : i + MAX_CHECK_CHUNK]
-        try:
-            df = yf.download(chunk, period="1d", progress=False, threads=True, auto_adjust=False)["Close"]
-            if isinstance(df, pd.Series):
-                df = df.to_frame(chunk[0])
-            for orig, yf_sym in zip(tickers[i : i + MAX_CHECK_CHUNK], chunk):
-                (
-                    good
-                    if yf_sym in df.columns and pd.notna(df[yf_sym]).any()
-                    else bad
-                ).append(orig)
-        except Exception:
-            for orig, yf_sym in zip(tickers[i : i + MAX_CHECK_CHUNK], chunk):
-                try:
-                    s = yf.download(
-                        yf_sym, period="1d", progress=False, threads=False, auto_adjust=False
-                    )["Close"]
-                    (good if pd.notna(s).any() else bad).append(orig)
-                except Exception:
-                    bad.append(orig)
+
+        # ---------- リトライ付き download ----------
+        for attempt in range(1, retries + 1):
+            try:
+                df = yf.download(chunk, period="1d", progress=False, threads=True)["Close"]
+                break  # 成功したらループを抜ける
+            except Exception as e:
+                if attempt == retries:
+                    print(f"[ERROR] yfinance: {chunk} 最終リトライ失敗 err={e}")
+                    df = None
+                else:
+                    print(f"[WARN] yfinance retry {attempt}/{retries} chunk={chunk} err={e}")
+                    time.sleep(2)
+
+        # ---------- 判定 ----------
+        if df is None:  # download 自体が失敗
+            bad.extend(tickers[i : i + MAX_CHECK_CHUNK])
+            continue
+
+        if isinstance(df, pd.Series):
+            df = df.to_frame(chunk[0])
+
+        for orig, yf_sym in zip(tickers[i : i + MAX_CHECK_CHUNK], chunk):
+            series = df.get(yf_sym)
+            (good if series is not None and pd.notna(series).any() else bad).append(orig)
 
     if bad:
-        print(f"[WARN] データ取得失敗 → 除外: {bad}")
+        print(f"[WARN] データ取得失敗 → 除外: {bad[:20]}{'...' if len(bad) > 20 else ''}")
+    print(f"[INFO] 可用ティッカー OK={len(good)}  NG={len(bad)}")
+
     return good
+
 
 
 # ──────────────────────────── ポート使用可否 ────────────────────────────
@@ -248,6 +264,12 @@ def main() -> None:
         print("\n── フィルタ別ドロップ数 ──")
         for k, v in w.counter.items():
             print(f"{k:12}: {v:,}")
+        print("DEBUG counter =>", w.counter)
+
+        pd.Series(w.counter, name="drop_count")\
+        .to_frame()\
+        .to_csv(DATA_DIR / "DROP_CNT_BY_FILTER.csv", header=True)
+        print(f"[INFO] DROP_CNT_BY_FILTER.csv を保存しました → {DATA_DIR}")
 
         required = [
             "date","symbol","entry","stop_price","tp_price","risk_pct","exit",

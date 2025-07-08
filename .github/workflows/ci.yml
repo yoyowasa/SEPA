@@ -7,8 +7,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # ★ Python 3.13 を指定
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - run: pip install -r requirements.txt
+          python-version: "3.13"
+
+      # 依存ライブラリをホイール限定でインストール
+      - run: |
+          pip install --upgrade pip wheel setuptools
+          pip install --only-binary ":all:" -r requirements.txt
+          # pytest が requirements に無ければ個別に
+          # pip install pytest
+      # テスト実行
       - run: pytest -q
+
+

@@ -1,2 +1,1 @@
-date,symbol,entry,stop_price,tp_price,risk_pct,exit
-2025-07-07,NVDA,120,110,135,5,
+date,symbol,entry,stop_price,tp_price,risk_pct,exit,Close,High52w,Low52w,RS_26w,EPS_G%,REV_G%
