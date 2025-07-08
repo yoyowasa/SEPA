@@ -12,14 +12,12 @@ jobs:
         with:
           python-version: "3.13"
 
-      # 依存ライブラリ
-      - run: pip install --upgrade pip wheel setuptools
-      - run: pip install -r requirements.txt
-        # pytest が requirements に無い場合は:
-        # pip install pytest
+      - run: |
+          pip install --upgrade pip wheel setuptools
+          pip install -r requirements.txt
+          pip install -e .
+          pip install pytest            # ← 追加
 
-      # テスト
-      - run: pytest -q
 
 
 
