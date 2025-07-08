@@ -8,19 +8,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ★ Python 3.13 を指定
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      # 依存ライブラリをホイール限定でインストール
-      - run: |
-          pip install --upgrade pip wheel setuptools
-          - run: pip install -r requirements.txt
+      # 依存ライブラリ
+      - run: pip install --upgrade pip wheel setuptools
+      - run: pip install -r requirements.txt
+        # pytest が requirements に無い場合は:
+        # pip install pytest
 
-          # pytest が requirements に無ければ個別に
-          # pip install pytest
-      # テスト実行
+      # テスト
       - run: pytest -q
+
 
 
