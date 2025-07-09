@@ -1,0 +1,35 @@
+# 仮想環境に入る# ▼ 2 行まとめてコピペ ▼
+poetry env activate
+& (poetry env info --path)\Scripts\activate.ps1   # ← 自動でパスを解決して有効化
+
+deactivate          # または exit
+
+
+① 仮想環境に入る（接頭辞を付ける）
+powershell
+コピーする
+編集する
+# ▼ 2 行まとめてコピペ ▼
+poetry env activate
+& (poetry env info --path)\Scripts\activate.ps1   # ← 自動でパスを解決して有効化
+2 行目は poetry env info --path で取得したパスに自動で置き換わるので、
+コピーしてそのまま貼るだけ で OK です。
+
+プロンプト先頭に (sepa-trade-…-py3.13) のような接頭辞が付けば成功。
+
+② 仮想環境を抜ける
+powershell
+コピーする
+編集する
+deactivate          # または exit
+③ 仮想環境に入らず 1 回だけスクリプト実行
+powershell
+コピーする
+編集する
+poetry run python scripts/demo_screen.py
+④ （おまけ）ワンライナーで “仮想環境内 PowerShell” を開く
+powershell
+コピーする
+編集する
+poetry run pwsh          # 新しい PowerShell が接頭辞付きで起動
+これで仮想環境内シェルが開くので、作業が終わったら exit で閉じます。

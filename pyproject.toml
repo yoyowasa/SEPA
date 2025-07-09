@@ -1,15 +1,27 @@
-[project]
-name = "sepa"
+[tool.poetry]
+name = "sepa-trade"
 version = "0.1.0"
-description = "Minervini SEPA trading pipeline"
-readme = "README.md"
-requires-python = ">=3.10"
+description = "Python implementation of Mark Minervini's SEPA trading methodology"
+authors = ["YOUR_NAME <you@example.com>"]
+packages = [{ include = "sepa_trade" }]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+pandas = "^2.2"
+numpy = "^2"  
+yfinance = "^0.2"
+ta = "^0.11"
+requests = "^2.32"
+pyyaml = "^6.0"
+python-dotenv = "^1.0"
+# --- バックテスト系ライブラリは後で追加予定 ---
+# backtesting = "^0.3" ← 必要になったら検討
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4"
+ruff = "^0.4"
+pytest = "^8.2"
 
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
-
-# ----★ 追加ここから ---------------------------------
-[tool.setuptools.packages.find]
-include = ["sepa*"]      # sepa パッケージだけを対象にする
-# ----★ 追加ここまで ---------------------------------
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

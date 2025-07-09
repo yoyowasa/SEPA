@@ -1,3 +1,0 @@
-date,symbol,side,qty,price,entry,stop_price,tp_price
-2025-06-01,NVDA,BUY,100,120.0,120.0,110.0,135.0
-2025-06-05,NVDA,SELL,100,135.0,120.0,110.0,135.0
