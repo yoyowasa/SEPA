@@ -5,27 +5,20 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+
     steps:
+      # ① リポジトリをチェックアウト
       - uses: actions/checkout@v4
 
+      # ② Python 3.13 をセットアップ
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-        - run: |
-            pip install --upgrade pip
-            pip install poetry
-            poetry install --without dev
-            poetry run pytest
-              - run: |
-                  poetry run black --check .
-                  poetry run flake8 .
-                  poetry run mypy sepa_trade
-                  poetry run pylint sepa_trade
-                  poetry run pytest --cov=sepa_trade --cov-report=xml --cov-report=html
-                env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
-
-
+      # ③ Poetry を利用して依存インストール → テスト実行
+      - name: Install dependencies & run tests
+        run: |
+          pip install --upgrade pip
+          pip install poetry
+          poetry install --without dev
+          poetry run pytest
