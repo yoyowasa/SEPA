@@ -7,18 +7,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ① リポジトリをチェックアウト
       - uses: actions/checkout@v4
 
-      # ② Python 3.13 をセットアップ
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      # ③ Poetry を利用して依存インストール → テスト実行
       - name: Install dependencies & run tests
         run: |
           pip install --upgrade pip
           pip install poetry
-          poetry install --without dev
+          # dev グループも含めてインストール
+          poetry install --with dev
+          # テスト実行
           poetry run pytest
