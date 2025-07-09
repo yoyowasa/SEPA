@@ -12,11 +12,19 @@ jobs:
         with:
           python-version: "3.13"
 
-      - run: |
-          pip install --upgrade pip wheel setuptools
-          pip install -r requirements.txt
-          pip install -e .
-          pip install pytest            # ← 追加
+        - run: |
+            pip install --upgrade pip
+            pip install poetry
+            poetry install --without dev
+            poetry run pytest
+              - run: |
+                  poetry run black --check .
+                  poetry run flake8 .
+                  poetry run mypy sepa_trade
+                  poetry run pylint sepa_trade
+                  poetry run pytest --cov=sepa_trade --cov-report=xml --cov-report=html
+                env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
 
