@@ -16,6 +16,7 @@ pyyaml = "^6.0"
 python-dotenv = "^1.0"
 # --- バックテスト系ライブラリは後で追加予定 ---
 # backtesting = "^0.3" ← 必要になったら検討
+lxml = "^6.0.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.4"
