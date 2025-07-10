@@ -5,47 +5,51 @@ from sepa_trade.strategy.vcp_breakout import VCPStrategy
 
 def build_dummy_vcp_df() -> pd.DataFrame:
     """
-    25 営業日分のダミー日足 OHLCV を生成。
+    25 営業日分の日足 OHLCV を生成するテスト用データ。
 
-    0‒4 日   : レンジ幅 10.0
-    5‒9 日   : 5.0   （前ブロックの 50 %）
-    10‒14 日 : 2.5   （さらに 50 %）
-    15‒19 日 : 1.25  （さらに 50 %）
-    24 日目  : ピボット 100 を 1 % 上抜け、出来高 2 倍
+    - 0–23 日目 : 5×4ブロック → 各ブロック 6 日で
+        High 固定100、レンジ幅を 10 → 5 → 2.5 → 1.25 と 50%ずつ縮小
+    - 24 日目   : High を 102 (ピボット 100 の 2 % 上) にし、
+                  Close は 101.5、Volume を 2 倍にしてブレイクアウト
     """
-    rng = pd.date_range(end="2025-07-11", periods=25, freq="B")
+    idx = pd.date_range(end="2025-07-11", periods=25, freq="B")
+    vol_base = 1_000
+    pivot = 100.0
 
-    data = {"High": [], "Low": [], "Close": [], "Volume": []}
-    volume_base = 1_000
-    pivot = 100.0  # 20 日高値になるよう固定
+    highs, lows, closes, vols = [], [], [], []
 
-    # 4 ブロック × 5 日で段階収縮
-    ranges = [10.0, 5.0, 2.5, 1.25]
-    for block, rng_width in enumerate(ranges):
-        for _ in range(5):
-            hi = pivot
-            lo = hi - rng_width
-            data["High"].append(hi)
-            data["Low"].append(lo)
-            data["Close"].append((hi + lo) / 2)
-            data["Volume"].append(volume_base)
+    # 4 ブロック × 6 日 = 24 日
+    widths = [10, 5, 2.5, 1.25]
+    for w in widths:
+        for _ in range(6):
+            highs.append(pivot)
+            lows.append(pivot - w)
+            closes.append(pivot - w / 2)
+            vols.append(vol_base)
 
-    # 24 日目（インデックス 24）：ブレイクアウト
-    data["High"].append(pivot * 1.02)
-    data["Low"].append(pivot * 1.00)
-    data["Close"].append(pivot * 1.015)
-    data["Volume"].append(volume_base * 2)
+    # 25 日目（ブレイクアウト）
+    highs.append(pivot * 1.02)
+    lows.append(pivot)
+    closes.append(pivot * 1.015)
+    vols.append(vol_base * 2)
 
-    return pd.DataFrame(data, index=rng)
+    return pd.DataFrame(
+        {
+            "High": highs,
+            "Low": lows,
+            "Close": closes,
+            "Volume": vols,
+        },
+        index=idx,
+    )
 
 
 def test_vcp_breakout_detects_entry():
     """ダミー VCP データで check_today がエントリー True を返すか"""
     df = build_dummy_vcp_df()
-    strat = VCPStrategy(df)  # shrink_ratio=0.5 デフォルトで通る
+    strat = VCPStrategy(df)  # デフォルト shrink_ratio=0.5 で通る
     flag, signal = strat.check_today()
 
     assert flag is True
     assert signal is not None
-    # ブレイクアウト価格が終値と一致
     assert np.isclose(signal.breakout_price, df["Close"].iloc[-1])
