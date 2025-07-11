@@ -29,7 +29,7 @@ def build_dummy_vcp_df() -> pd.DataFrame:
     highs.append(pivot * 1.015)
     lows.append(pivot)
     closes.append(pivot * 1.01)
-    vols.append(vol_base * 2)
+    vols.append(vol_base * 3)
 
     return pd.DataFrame(
         {"High": highs, "Low": lows, "Close": closes, "Volume": vols}, index=idx
