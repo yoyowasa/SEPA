@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-auto_bot.py  (v2)
+auto_bot.py  (v3)
 
-・日足／週足データ取得を data_fetcher に統一
-・週足フィルター → 日足テンプレ → VCP → エントリー
-・ATR×2／10EMA 割れで自動エグジット
-・Alpaca Paper 発注 + SNS 投稿
+週足フィルター → 日足トレンドテンプレート → VCP ブレイク
+公式ガイドラインの **下限値** で運用する自動売買ボット。
 
-※ 依存：python-dotenv, yfinance, alpaca-trade-api, requests_oauthlib
+主な調整点
+-----------
+* RS_THRESHOLD   : 80 → 70（WeeklyTrendTemplate 内で反映済み）
+* VCP shrink     : shrink_steps 3 → 2（VCPStrategy デフォルト変更済み）
+* RISK_PER_TRADE : 0.005 (0.5 %) → **0.0125 (1.25 %)**
+* ATR_MULT_EXIT  : 2.0 → **1.5**（損切り幅 ≒10 %以内に収める目安）
 """
 
 from __future__ import annotations
@@ -30,13 +33,13 @@ from sepa_trade.live.trade_manager import TradeManager, OrderInfo
 from sepa_trade.utils.notifier import SNSNotifier, SignalMessage
 
 # ─────────────────────────────────────────────
-# 定数
+# 定数（公式下限で統一）
 # ─────────────────────────────────────────────
 YEARS_BACK = 2
-RS_LOOKBACK = 126
-RISK_PER_TRADE = 0.005
-ATR_MULT_EXIT = 2.0
-W52 = 252
+RS_LOOKBACK = 126          # 半年
+RISK_PER_TRADE = 0.0125    # 口座の 1.25 % をリスク許容
+ATR_MULT_EXIT = 1.5        # ATR×1.5 ≒ 株価10%以内ストップ
+W52 = 252                  # 52 週（日足換算）
 
 load_dotenv()
 
@@ -45,9 +48,9 @@ load_dotenv()
 # CLI
 # ─────────────────────────────────────────────
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="SEPA Auto Bot")
-    p.add_argument("--tickers-file", type=Path, required=True)
-    p.add_argument("--cash", type=float, required=True)
+    p = argparse.ArgumentParser(description="SEPA Auto Bot (official lower‑bound params)")
+    p.add_argument("--tickers-file", type=Path, required=True, help="1列CSV (tickers)")
+    p.add_argument("--cash", type=float, required=True, help="運用元本")
     return p.parse_args()
 
 
@@ -67,15 +70,10 @@ def load_tickers(path: Path) -> List[str]:
 def main() -> None:
     args = parse_args()
     tickers = load_tickers(args.tickers_file)
-    print(f"Universe loaded: {len(tickers)} tickers")
+    print(f"Universe: {len(tickers)} tickers")
 
-    # ---- データ取得（日足） ----
-    daily_dict = {
-        tic: get_daily(tic, years_back=YEARS_BACK)["Close"]
-        for tic in tickers
-    }
-
-    # ---- RS ----
+    # 日足取得 & RS 計算
+    daily_dict = {tic: get_daily(tic, YEARS_BACK)["Close"] for tic in tickers}
     rs_scores = compute_rs_universe(daily_dict, lookback=RS_LOOKBACK)
 
     tm = TradeManager(paper=True)
@@ -86,30 +84,28 @@ def main() -> None:
         if len(daily_series) < W52 * 2:
             continue
 
-        # 週足フィルタ
+        # 週足フィルター（RS70 下限は WeeklyTrendTemplate 内定義）
         weekly_df = to_weekly(daily_series.to_frame(name="Close"))
-        w_pass = WeeklyTrendTemplate(weekly_df).passes(rs_rating=rs_scores[tic])
-        if not w_pass:
+        if not WeeklyTrendTemplate(weekly_df).passes(rs_rating=rs_scores[tic]):
             continue
 
         # 日足テンプレ
         pct_low = (daily_series.iloc[-1] - daily_series.rolling(W52).min().iloc[-1]) / daily_series.rolling(W52).min().iloc[-1] * 100
         pct_high = (daily_series.rolling(W52).max().iloc[-1] - daily_series.iloc[-1]) / daily_series.rolling(W52).max().iloc[-1] * 100
-        d_pass = TrendTemplate(daily_series.to_frame(name="Close")).passes(
+        if not TrendTemplate(daily_series.to_frame(name="Close")).passes(
             rs_rating=rs_scores[tic],
             pct_from_low=pct_low,
             pct_from_high=pct_high,
-        )
-        if not d_pass:
+        ):
             continue
 
-        # VCP ブレイク
-        df_daily_full = get_daily(tic, years_back=YEARS_BACK)  # OHLCV
-        entry_flag, sig = VCPStrategy(df_daily_full).check_today()
+        # VCP ブレイク判定（shrink_steps=2 デフォルト）
+        df_full = get_daily(tic, YEARS_BACK)  # OHLCV
+        entry_flag, sig = VCPStrategy(df_full).check_today()
         if not entry_flag or sig is None:
             continue
 
-        # ポジションサイズ
+        # ポジションサイズ計算
         risk_per_share = sig.atr * 1.5
         qty = max(int(args.cash * RISK_PER_TRADE / risk_per_share), 1)
 
@@ -134,7 +130,7 @@ def main() -> None:
     try:
         positions = tm.api.list_positions()
     except Exception as e:
-        print("Failed to fetch positions:", e)
+        print("Alpaca API error:", e)
         positions = []
 
     for pos in positions:
