@@ -133,6 +133,17 @@ def load_tickers(path: Path) -> List[str]:
 def run_backtest(ticker: str, years: int) -> Dict[str, float]:
     start = dt.date.today() - dt.timedelta(days=365 * years)
     df = yf.download(ticker, start=start.isoformat(), auto_adjust=False)
+
+    # ── ➊ 列が MultiIndex なら平坦化 ───────────────────
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    # ── ➋ Backtest が要求する 5 列に絞る ────────────────
+    required_cols = ["Open", "High", "Low", "Close", "Volume"]
+    if not set(required_cols).issubset(df.columns):
+        return {"Ticker": ticker, "Trades": 0}
+    df = df[required_cols]
+
     if len(df) < 300:  # データ不足
         return {"Ticker": ticker, "Trades": 0}
 
@@ -144,7 +155,8 @@ def run_backtest(ticker: str, years: int) -> Dict[str, float]:
         trade_on_close=True,
         exclusive_orders=True,
     )
-    stats = bt.run(verbose=False) 
+    stats = bt.run(verbose=False)
+
     return {
         "Ticker": ticker,
         "Return [%]": stats["Return [%]"],
