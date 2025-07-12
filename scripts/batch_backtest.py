@@ -155,7 +155,10 @@ def run_backtest(ticker: str, years: int) -> Dict[str, float]:
         trade_on_close=True,
         exclusive_orders=True,
     )
-    stats = bt.run(verbose=False)
+
+    # ここを変更
+    stats = bt.run()      # ← verbose 引数を削除
+
 
     return {
         "Ticker": ticker,
