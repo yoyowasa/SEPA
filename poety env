@@ -1,8 +1,9 @@
 # 仮想環境に入る# ▼ 2 行まとめてコピペ ▼
-poetry env activate
-& (poetry env info --path)\Scripts\activate.ps1   # ← 自動でパスを解決して有効化
+cd C:\sepa_project
+$venvPath = poetry env info --path
+& "$venvPath\Scripts\Activate.ps1"
 
-deactivate          # または exit
+
 
 
 ① 仮想環境に入る（接頭辞を付ける）
