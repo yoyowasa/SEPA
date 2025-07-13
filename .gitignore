@@ -17,3 +17,4 @@ data/raw/
 logs/
 *.log
 .env
+!results/vcp_backtest_*.csv
