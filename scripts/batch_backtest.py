@@ -179,7 +179,8 @@ def run_backtest(ticker: str, years: int) -> Dict[str, float]:
     stage2_pass += 1
 
     # ── 日足テンプレ
-    d_template = TrendTemplate(df["Close"].to_frame(name="Close"))
+    d_template = TrendTemplate(close_series.to_frame(name="Close"))
+
 
     # --- 52 週高値･安値との距離を計算するブロック ----
     W52 = 252
