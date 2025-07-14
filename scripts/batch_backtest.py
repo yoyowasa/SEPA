@@ -75,7 +75,8 @@ class VCPBacktestStrategy(Strategy):
             return
 
         # 週足フィルター
-        weekly = daily_to_weekly(close)  
+        weekly = daily_to_weekly(self.close_series)   # ← これで OK
+
         if self.weekly_template_cache is None:
             self.weekly_template_cache = WeeklyTrendTemplate(weekly)
         if not self.weekly_template_cache.passes(rs_rating=80):
@@ -133,24 +134,48 @@ def load_tickers(path: Path) -> List[str]:
 # バックテスト 1 銘柄
 # ───────────────────────────────────────────
 def run_backtest(ticker: str, years: int) -> Dict[str, float]:
+    """
+    1 銘柄の VCP バックテストを実行して主要統計を返す。
+    ・取得失敗／データ不足時は Trades=0 で早期リターン
+    """
+    try:
+        # ① 調整済み日足を取得（配当・分割行なし）
+        df = load_daily(ticker, years)
 
-        # 新: ユーティリティ関数で取得
-    df = load_daily(ticker, years)
-    close = df["Close"]  
-    weekly = daily_to_weekly(close)
-    # ── ➊ 列が MultiIndex なら平坦化 ───────────────────
+        # ② Close Series を安全に抽出
+        if "Close" in df.columns:
+            close = df["Close"]
+        else:
+            # Close_x / Adj Close など “Close” を含む列を拾う
+            close = df.filter(regex="close", case=False).iloc[:, 0]
+
+        # ③ 週足終値 DataFrame に変換（未確定週除外）
+        weekly = daily_to_weekly(close)
+
+    except Exception as e:
+        print(f"{ticker:6}: データ取得失敗 → skip ({e})")
+        return {"Ticker": ticker, "Trades": 0}
+
+    # ── Stage-2 週足テンプレート判定 ──────────────────
+    wt = WeeklyTrendTemplate(weekly)
+    if not wt.passes(rs_rating=80):
+        return {"Ticker": ticker, "Trades": 0}
+
+    # ── マルチインデックスをフラット化（複数銘柄一括取得時の保険） ──
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    # ── ➋ Backtest が要求する 5 列に絞る ────────────────
+    # ── Backtest が要求する 5 列だけ残す ─────────────────
     required_cols = ["Open", "High", "Low", "Close", "Volume"]
     if not set(required_cols).issubset(df.columns):
         return {"Ticker": ticker, "Trades": 0}
     df = df[required_cols]
 
-    if len(df) < 300:  # データ不足
+    # ── データ長チェック（最低 300 営業日 ≒ 1.2 年） ───────────
+    if len(df) < 300:
         return {"Ticker": ticker, "Trades": 0}
 
+    # ── バックテスト実行 ────────────────────────────────
     bt = Backtest(
         df,
         VCPBacktestStrategy,
@@ -159,10 +184,7 @@ def run_backtest(ticker: str, years: int) -> Dict[str, float]:
         trade_on_close=True,
         exclusive_orders=True,
     )
-
-    # ここを変更
-    stats = bt.run()      # ← verbose 引数を削除
-
+    stats = bt.run()  # verbose 引数は不要
 
     return {
         "Ticker": ticker,
@@ -171,6 +193,7 @@ def run_backtest(ticker: str, years: int) -> Dict[str, float]:
         "MaxDD [%]": stats["Max. Drawdown [%]"],
         "Trades": stats["# Trades"],
     }
+
 
 
 # ───────────────────────────────────────────

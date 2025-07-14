@@ -22,17 +22,44 @@ def load_daily(ticker: str, years: int = 5) -> pd.DataFrame:
     return df[["Open", "High", "Low", "Close", "Volume"]]
 
 
-def daily_to_weekly(close: pd.Series) -> pd.DataFrame:
+def daily_to_weekly(close_like) -> pd.DataFrame:
     """
-    日足 Series → 週足終値 DataFrame
-    ・週末を金曜終値で固定
-    ・未確定週は除外
-    ・欠損は前方補完で埋める
+    日足 Series / DataFrame → 週足終値 DataFrame("Close"1列)
+    ・週末＝金曜終値
+    ・未確定週を除外
+    ・欠損は前方補完
     """
+    import pandas as pd
+
+    # --- 1) Close 列を Series に抽出 ----------------------------
+    if isinstance(close_like, pd.Series):
+        close_series = close_like
+
+    else:  # DataFrame
+        cols = list(close_like.columns)
+
+        # MultiIndex → 先頭レベルを平坦化
+        if isinstance(close_like.columns, pd.MultiIndex):
+            close_like = close_like.copy()
+            close_like.columns = close_like.columns.get_level_values(0)
+            cols = list(close_like.columns)
+
+        if "Close" in cols:
+            close_series = close_like["Close"]
+        elif "Adj Close" in cols:
+            close_series = close_like["Adj Close"]
+        elif any(c.startswith("Close") for c in cols):
+            use_col = [c for c in cols if c.startswith("Close")][0]
+            close_series = close_like[use_col]
+        else:
+            raise ValueError("Close 列を特定できません")
+
+    # --- 2) 週足変換 -------------------------------------------
     weekly = (
-        close.resample("W-FRI").last()  # 金曜終値
-             .ffill()                   # 欠損を前週値で補完
-             .iloc[:-1]                 # 今週（未確定）は除外
-             .to_frame("Close")
+        close_series.resample("W-FRI").last()  # 金曜終値
+                   .ffill()                    # 欠損補完
+                   .iloc[:-1]                  # 未確定週を除外
+                   .to_frame("Close")
     )
     return weekly
+
