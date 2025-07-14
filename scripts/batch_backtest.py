@@ -29,7 +29,9 @@ from sepa_trade.technical import TrendTemplate
 from sepa_trade.rs import compute_rs_universe
 from sepa_trade.strategy.vcp_breakout import VCPStrategy
 from sepa_trade.strategy.exit_rules import ExitStrategy
-
+# 既存 import 群の末尾あたり
+from sepa_trade.utils.timeframe import load_daily       # ← 追加
+from sepa_trade.utils.timeframe import daily_to_weekly
 # ───────────────────────────────────────────
 # Strategy クラス（ティッカーごと再利用）
 # ───────────────────────────────────────────
@@ -73,7 +75,7 @@ class VCPBacktestStrategy(Strategy):
             return
 
         # 週足フィルター
-        weekly = df["Close"].resample("W-FRI").last().to_frame(name="Close")
+        weekly = daily_to_weekly(close)  
         if self.weekly_template_cache is None:
             self.weekly_template_cache = WeeklyTrendTemplate(weekly)
         if not self.weekly_template_cache.passes(rs_rating=80):
@@ -131,9 +133,11 @@ def load_tickers(path: Path) -> List[str]:
 # バックテスト 1 銘柄
 # ───────────────────────────────────────────
 def run_backtest(ticker: str, years: int) -> Dict[str, float]:
-    start = dt.date.today() - dt.timedelta(days=365 * years)
-    df = yf.download(ticker, start=start.isoformat(), auto_adjust=False)
 
+        # 新: ユーティリティ関数で取得
+    df = load_daily(ticker, years)
+    close = df["Close"]  
+    weekly = daily_to_weekly(close)
     # ── ➊ 列が MultiIndex なら平坦化 ───────────────────
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)

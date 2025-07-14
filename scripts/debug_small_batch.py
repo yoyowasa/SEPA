@@ -92,33 +92,105 @@ def main() -> None:
     # 2) フィルタごとのカウンタ
     # ─────────────────────────────
     cnt_stage2 = 0
-    cnt_daily = 0
-    cnt_vcp = 0
+    cnt_daily  = 0
+    cnt_vcp    = 0
+
+    # ★★★ ここで失敗理由カウンタを用意 ★★★
+    fail_cnt = {
+        "rs": 0,
+        "ma_order": 0,
+        "ma40_slope": 0,
+        "pct_from_low": 0,
+        "pct_from_high": 0,
+    }
 
     for tic, close in closes.items():
+        # ……(DataFrame → Series 統一の処理はそのまま)……
+        # ---- Stage‑2 判定 ----
+        # 旧:
+        # weekly = close.resample("W-FRI").last()....
 
-        # ── DataFrame → Series に統一 ──────────────────────
-        if isinstance(close, pd.DataFrame):
-            # ① マルチインデックスなら 1 段目を取り出す
-            if isinstance(close.columns, pd.MultiIndex):
-                close.columns = close.columns.get_level_values(0)
-
-            # ② 'Close' があれば優先、無ければ 'Adj Close'
-            if "Close" in close.columns:
-                close = close["Close"]
-            elif "Adj Close" in close.columns:
-                close = close["Adj Close"]
-            else:
-                print(f"{tic:6} : Close 列なし skip")
-                continue
+        # 新: dropna 後、改めて DataFrame 化して wt を作成
 
         # ---- Stage‑2 判定 ----
-        weekly = close.resample("W-FRI").last().to_frame(name="Close")
-        if not WeeklyTrendTemplate(weekly).passes(rs_rating=rs_scores[tic]):
-            print(f"{tic:6} : Stage‑2 不合格")
-            continue
-        cnt_stage2 += 1
+        # 週足終値を取得し、必ず「Close」1 列の DataFrame に統一
+        weekly_raw = close.resample("W-FRI").last().ffill()   # 前週値で欠損補完
 
+        # ① Series → DataFrame 化
+        if isinstance(weekly_raw, pd.Series):
+            weekly = weekly_raw.to_frame(name="Close")
+
+        # ② DataFrame の場合
+        else:
+            # MultiIndex → 先頭レベルを平坦化
+            if isinstance(weekly_raw.columns, pd.MultiIndex):
+                weekly_raw.columns = weekly_raw.columns.get_level_values(0)
+
+            cols = list(weekly_raw.columns)
+
+            # “Close” があれば採用
+            if "Close" in cols:
+                weekly = weekly_raw[["Close"]]
+
+            # “Adj Close” だけある場合 → Rename
+            elif "Adj Close" in cols:
+                weekly = weekly_raw[["Adj Close"]].rename(
+                    columns={"Adj Close": "Close"}
+                )
+
+            # “Close_x” “Close_y” など suffix 付き → 最初に見つかったものを流用
+            elif any(c.startswith("Close") for c in cols):
+                use_col = [c for c in cols if c.startswith("Close")][0]
+                weekly = weekly_raw[[use_col]].rename(columns={use_col: "Close"})
+
+            # それ以外はスキップしてカウント
+            else:
+                print(f"{tic:6}: Close 列なし skip (columns={cols})")
+                fail_cnt["ma_order"] += 1
+                continue
+
+        # WeeklyTrendTemplate 判定に進む
+        wt = WeeklyTrendTemplate(weekly)
+
+
+
+
+
+        # ─── 各条件ごとに if → continue ───
+        if rs_scores[tic] < wt.RS_THRESHOLD:
+            fail_cnt["rs"] += 1
+            continue
+
+        # ma_order 判定ブロック
+        if not (close.iloc[-1] > wt.ma30.iloc[-1] > wt.ma40.iloc[-1]
+                and close.iloc[-1] > wt.ma10.iloc[-1]):
+            fail_cnt["ma_order"] += 1
+
+            # << ここを絶対に実行させる >>
+            print(f"\nDEBUG {tic}:")
+            print(" price :", close.iloc[-1])
+            print(" ma10  :", wt.ma10.iloc[-1])
+            print(" ma30  :", wt.ma30.iloc[-1])
+            print(" ma40  :", wt.ma40.iloc[-1])
+
+            continue
+
+        if not (wt.ma40.iloc[-1] > wt.ma40.iloc[-4]):
+            fail_cnt["ma40_slope"] += 1
+            continue
+
+        pct_from_low = (close.iloc[-1] - close.min()) / close.min() * 100
+        if pct_from_low < wt.PCT_FROM_LOW_MIN:
+            fail_cnt["pct_from_low"] += 1
+            continue
+
+        pct_from_high = (close.max() - close.iloc[-1]) / close.max() * 100
+        if pct_from_high > wt.PCT_FROM_HIGH_MAX:
+            fail_cnt["pct_from_high"] += 1
+            continue
+
+        # ここまで全部通過で Stage‑2 合格
+        cnt_stage2 += 1
         # ---- 日足テンプレ判定 ----
         pct_from_low = (
             (close.iloc[-1] - close.rolling(252).min().iloc[-1])
@@ -151,10 +223,15 @@ def main() -> None:
         print(f"{tic:6} : ✅ VCP ブレイク → エントリー候補")
 
     # ───────── 集計結果 ─────────
+    print("\n==== Stage‑2 不合格 内訳 ====")
+    for k, v in fail_cnt.items():
+        print(f"{k:14}: {v}")
+
     print("\n==== 集計結果 ====")
     print(f"Stage‑2 合格   : {cnt_stage2}")
     print(f"日足テンプレ合格: {cnt_daily}")
     print(f"VCP ブレイク   : {cnt_vcp}")
+
 
 
 
