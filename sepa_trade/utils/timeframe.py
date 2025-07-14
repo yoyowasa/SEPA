@@ -63,3 +63,14 @@ def daily_to_weekly(close_like) -> pd.DataFrame:
     )
     return weekly
 
+def debug_print_weekly_ma(ticker: str, weekly: pd.DataFrame) -> None:
+    """
+    デバッグ専用：直近 5 週の Close / ma30 / ma40 を表示
+    """
+    ma30 = weekly["Close"].rolling(30).mean()
+    ma40 = weekly["Close"].rolling(40).mean()
+    print(f"\n[{ticker}] 直近 5 週")
+    print(weekly.tail(5)
+          .assign(ma30=ma30, ma40=ma40)
+          .tail(5)[["Close", "ma30", "ma40"]]
+          .to_string())

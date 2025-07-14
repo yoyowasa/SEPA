@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 batch_backtest.py
 
@@ -32,7 +32,15 @@ from sepa_trade.strategy.exit_rules import ExitStrategy
 # 既存 import 群の末尾あたり
 from sepa_trade.utils.timeframe import load_daily       # ← 追加
 from sepa_trade.utils.timeframe import daily_to_weekly
-# ───────────────────────────────────────────
+from sepa_trade.utils.timeframe import (
+    load_daily, daily_to_weekly, debug_print_weekly_ma  # ← 追記
+)
+from sepa_trade.rs import compute_rs_universe
+# 既存 import 群のあと
+stage2_pass = 0        # 週足テンプレ合格
+daily_pass  = 0        # 日足テンプレ合格
+vcp_pass    = 0        # VCP ブレイク発生
+
 # Strategy クラス（ティッカーごと再利用）
 # ───────────────────────────────────────────
 class VCPBacktestStrategy(Strategy):
@@ -135,64 +143,90 @@ def load_tickers(path: Path) -> List[str]:
 # ───────────────────────────────────────────
 def run_backtest(ticker: str, years: int) -> Dict[str, float]:
     """
-    1 銘柄の VCP バックテストを実行して主要統計を返す。
-    ・取得失敗／データ不足時は Trades=0 で早期リターン
+    1 銘柄の VCP バックテストを実行。
+    フィルタをどこまで通過したかをカウントする。
     """
     try:
-        # ① 調整済み日足を取得（配当・分割行なし）
         df = load_daily(ticker, years)
 
-        # ② Close Series を安全に抽出
+        # Close 抽出 ― 小文字や Close_x も許容
         if "Close" in df.columns:
-            close = df["Close"]
+            close_series = df["Close"].squeeze()
         else:
-            # Close_x / Adj Close など “Close” を含む列を拾う
-            close = df.filter(regex="close", case=False).iloc[:, 0]
+            close_series = (
+                df.filter(regex="close", case=False).iloc[:, 0].squeeze()
+            )
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0] # 単一列に変換       
 
-        # ③ 週足終値 DataFrame に変換（未確定週除外）
-        weekly = daily_to_weekly(close)
-
+        # 週足 DataFrame
+        weekly = daily_to_weekly(close_series)
+        if ticker in ("AAPL", "NVDA"):          # ← 好きな銘柄で
+            debug_print_weekly_ma(ticker, weekly)
+        if ticker == "AAPL":                    # 見たい銘柄を指定
+            rs = compute_rs_universe({"AAPL": close}, lookback=126)
+            print("\nRS 分布概要\n", pd.Series(rs).describe())
     except Exception as e:
         print(f"{ticker:6}: データ取得失敗 → skip ({e})")
         return {"Ticker": ticker, "Trades": 0}
 
-    # ── Stage-2 週足テンプレート判定 ──────────────────
+    # ── Stage-2 週足テンプレ（★ rs_rating を 80→70 に緩和して様子を見る）
     wt = WeeklyTrendTemplate(weekly)
-    if not wt.passes(rs_rating=80):
+    if not wt.passes(rs_rating=70):                       # --► 変更点
         return {"Ticker": ticker, "Trades": 0}
 
-    # ── マルチインデックスをフラット化（複数銘柄一括取得時の保険） ──
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+    global stage2_pass
+    stage2_pass += 1
 
-    # ── Backtest が要求する 5 列だけ残す ─────────────────
-    required_cols = ["Open", "High", "Low", "Close", "Volume"]
-    if not set(required_cols).issubset(df.columns):
+    # ── 日足テンプレ
+    d_template = TrendTemplate(df["Close"].to_frame(name="Close"))
+
+    # --- 52 週高値･安値との距離を計算するブロック ----
+    W52 = 252
+    pct_low  = (close_series.iloc[-1] - close_series.rolling(W52).min().iloc[-1]) \
+            / close_series.rolling(W52).min().iloc[-1] * 100                 # ← close→close_series
+
+    pct_high = (close_series.rolling(W52).max().iloc[-1] - close_series.iloc[-1]) \
+            / close_series.rolling(W52).max().iloc[-1] * 100                 # ← close→close_series
+
+
+    # ★ pct_from_high を −25 → −35 に緩和（25% 以内→35% 以内）
+    if not d_template.passes(rs_rating=70,
+                             pct_from_low=pct_low,
+                             pct_from_high=min(pct_high, 35)):
         return {"Ticker": ticker, "Trades": 0}
-    df = df[required_cols]
 
-    # ── データ長チェック（最低 300 営業日 ≒ 1.2 年） ───────────
-    if len(df) < 300:
+    global daily_pass
+    daily_pass += 1
+
+    # ── VCP ブレイク
+    vcp = VCPStrategy(df)
+    entry, sig = vcp.check_today()
+    if not (entry and sig):
         return {"Ticker": ticker, "Trades": 0}
 
-    # ── バックテスト実行 ────────────────────────────────
+    global vcp_pass
+    vcp_pass += 1
+
+    # ── Backtest 実行（省略なし）
     bt = Backtest(
-        df,
+        df[["Open", "High", "Low", "Close", "Volume"]],
         VCPBacktestStrategy,
         cash=100_000,
         commission=0.001,
         trade_on_close=True,
         exclusive_orders=True,
     )
-    stats = bt.run()  # verbose 引数は不要
+    stats = bt.run()
 
     return {
-        "Ticker": ticker,
-        "Return [%]": stats["Return [%]"],
+        "Ticker":      ticker,
+        "Return [%]":  stats["Return [%]"],
         "WinRate [%]": stats["Win Rate [%]"],
-        "MaxDD [%]": stats["Max. Drawdown [%]"],
-        "Trades": stats["# Trades"],
+        "MaxDD [%]":   stats["Max. Drawdown [%]"],
+        "Trades":      stats["# Trades"],
     }
+
 
 
 
@@ -208,6 +242,10 @@ def main() -> None:
         results = pool.starmap(run_backtest, [(tic, args.years) for tic in tickers])
 
     df_res = pd.DataFrame(results).fillna(0)
+    df_res = df_res[df_res["Trades"] > 0]
+    if df_res.empty:
+        print("▶ バックテスト成功銘柄が 0 件でした。")
+        return
     today = dt.date.today().strftime("%Y%m%d")
     out_dir = Path("results")
     out_dir.mkdir(exist_ok=True)
@@ -224,6 +262,10 @@ def main() -> None:
     print(top20.to_string(index=False))
 
     print(f"\nSaved full results to {out_path}")
+    print("\n---- フィルタ通過数 ----")
+    print(f"Stage-2   : {stage2_pass}")
+    print(f"日足テンプレ: {daily_pass}")
+    print(f"VCP       : {vcp_pass}")
 
 
 if __name__ == "__main__":
