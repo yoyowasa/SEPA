@@ -1,0 +1,54 @@
+[tool.poetry]
+name = "sepa-trade"
+version = "0.1.0"
+description = "Python implementation of Mark Minervini's SEPA trading methodology"
+authors = ["YOUR_NAME <you@example.com>"]
+packages = [{ include = "sepa_trade" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pandas = "^2.2"
+yfinance = "^0.2"
+pandas-ta = "^0.3"
+python-dotenv = "^1.0"
+tqdm = "^4.66"
+# requests, lxml, pyyaml, websockets などは、
+# 上記ライブラリが必要に応じて最適なバージョンを自動でインストールするため、
+# 明示的な指定を削除して衝突を回避します。
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4"
+ruff = "^0.3"
+pytest = "^8.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+[tool.poetry]
+name = "sepa-trade"
+version = "0.1.0"
+description = "Python implementation of Mark Minervini's SEPA trading methodology"
+authors = ["YOUR_NAME <you@example.com>"]
+packages = [{ include = "sepa_trade" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+
+# Core data and API libraries
+financialmodelingprep-api = "*"
+pandas = "*"
+yfinance = "*"
+pandas-ta = "*"
+
+# Utilities
+python-dotenv = "*"
+tqdm = "*"
+
+[tool.poetry.group.dev.dependencies]
+black = "*"
+ruff = "*"
+pytest = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

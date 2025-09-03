@@ -21,19 +21,26 @@ DISCORD_WEBHOOK_URL       : Webhook URL
 
 from __future__ import annotations
 
-import json
+import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 
 import requests
 import requests_oauthlib
+
+# ロガーの設定
+logger = logging.getLogger(__name__)
+
+# 定数
+TWITTER_API_URL = "https://api.twitter.com/2/tweets"
+REQUEST_TIMEOUT = 10
 
 
 @dataclass
 class SignalMessage:
     symbol: str
-    side: str            # "ENTRY" or "EXIT"
+    side: Literal["ENTRY", "EXIT"]
     price: float
     qty: int
     comment: Optional[str] = None
@@ -45,12 +52,17 @@ class SNSNotifier:
     def __init__(self) -> None:
         # X (Twitter) 認証情報
         self._tw_auth = None
-        if os.getenv("TWITTER_API_KEY"):
+        api_key = os.getenv("TWITTER_API_KEY")
+        api_secret = os.getenv("TWITTER_API_SECRET")
+        access_token = os.getenv("TWITTER_ACCESS_TOKEN")
+        access_secret = os.getenv("TWITTER_ACCESS_SECRET")
+
+        if all((api_key, api_secret, access_token, access_secret)):
             self._tw_auth = requests_oauthlib.OAuth1(
-                os.getenv("TWITTER_API_KEY"),
-                os.getenv("TWITTER_API_SECRET"),
-                os.getenv("TWITTER_ACCESS_TOKEN"),
-                os.getenv("TWITTER_ACCESS_SECRET"),
+                api_key,
+                api_secret,
+                access_token,
+                access_secret,
             )
 
         self.discord_url = os.getenv("DISCORD_WEBHOOK_URL")
@@ -62,14 +74,23 @@ class SNSNotifier:
         """各 SNS へ投稿"""
         text = self._format_text(msg)
 
+        posted_successfully = False
         if self._tw_auth:
-            self._post_twitter(text)
-        if self.discord_url:
-            self._post_discord(text)
+            try:
+                self._post_twitter(text)
+                posted_successfully = True
+            except RuntimeError as e:
+                logger.error("Twitterへの投稿に失敗しました: %s", e)
 
-        if not self._tw_auth and not self.discord_url:
-            print("⚠️  SNS 設定なし：以下のメッセージを投稿せず印刷")
-            print(text)
+        if self.discord_url:
+            try:
+                self._post_discord(text)
+                posted_successfully = True
+            except RuntimeError as e:
+                logger.error("Discordへの投稿に失敗しました: %s", e)
+
+        if not posted_successfully:
+            logger.warning("⚠️  SNSへの投稿がありませんでした。コンソールに出力します:\n%s", text)
 
     # ──────────────────────────────
     # 内部投稿メソッド
@@ -83,12 +104,13 @@ class SNSNotifier:
 
     def _post_twitter(self, text: str) -> None:
         """X v2 API でツイート"""
-        url = "https://api.twitter.com/2/tweets"
         payload = {"text": text}
-        resp = requests.post(url, auth=self._tw_auth, json=payload, timeout=10)
+        resp = requests.post(
+            TWITTER_API_URL, auth=self._tw_auth, json=payload, timeout=REQUEST_TIMEOUT
+        )
         if resp.status_code >= 400:
             raise RuntimeError(f"Twitter post failed: {resp.text}")
-        print("✅ Tweeted")
+        logger.info("✅ Tweeted: %s", text)
 
     def _post_discord(self, text: str) -> None:
         """Discord Webhook へ投稿"""
@@ -96,8 +118,8 @@ class SNSNotifier:
             self.discord_url,
             json={"content": text},
             headers={"Content-Type": "application/json"},
-            timeout=10,
+            timeout=REQUEST_TIMEOUT,
         )
         if resp.status_code >= 400:
             raise RuntimeError(f"Discord post failed: {resp.text}")
-        print("✅ Discord posted")
+        logger.info("✅ Discord posted: %s", text)

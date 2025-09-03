@@ -1,9 +1,10 @@
 # 仮想環境に入る# ▼ 2 行まとめてコピペ ▼
 cd C:\sepa_project
-$venvPath = poetry env info --path
+$venvPath = (poetry env info --path)
 & "$venvPath\Scripts\Activate.ps1"
 
 
+sepavenv 
 
 
 ① 仮想環境に入る（接頭辞を付ける）

@@ -1,29 +1,19 @@
 [tool.poetry]
-name = "sepa-trade"
+name = "sepa-project"
 version = "0.1.0"
-description = "Python implementation of Mark Minervini's SEPA trading methodology"
-authors = ["YOUR_NAME <you@example.com>"]
-packages = [{ include = "sepa_trade" }]
+description = ""
+authors = ["Yo <you@example.com>"]
+package-mode = false
 
 [tool.poetry.dependencies]
-python = "^3.13"
-pandas = "^2.2"
-numpy = "^2"  
-yfinance = "^0.2"
-ta = "^0.11"
-requests = "^2.32"
-pyyaml = "^6.0"
-python-dotenv = "^1.0"
-# --- バックテスト系ライブラリは後で追加予定 ---
-# backtesting = "^0.3" ← 必要になったら検討
-lxml = "^6.0.0"
-websockets = "^15"
+python = ">=3.11,<3.12"
+numpy = "*"
+pandas = "*"
 
 [tool.poetry.group.dev.dependencies]
-black = "^24.4"
-ruff = "^0.4"
-pytest = "^8.2"
+black = "*"
+ruff = "*"
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=1.9.0"]
 build-backend = "poetry.core.masonry.api"

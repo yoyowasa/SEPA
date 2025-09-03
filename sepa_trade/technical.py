@@ -39,7 +39,6 @@ class TrendTemplate:
     # ───────────────────
     def passes(
         self,
-        rs_rating: float,
         pct_from_low: Optional[float] = None,
         pct_from_high: Optional[float] = None,
         ma200_lookback: int = 30,
@@ -49,8 +48,6 @@ class TrendTemplate:
 
         Parameters
         ----------
-        rs_rating : float
-            RS レーティング (0–100)。70 以上推奨。
         pct_from_low : float, optional
             52 週安値からの上昇率 (%). 未指定なら内部で計算。
         pct_from_high : float, optional
@@ -63,29 +60,44 @@ class TrendTemplate:
         bool
             8 条件すべて満たせば True
         """
+        # 計算に必要なデータが揃っているか確認
+        if len(self.df) < 252:
+            return False
+
         latest = self.df.iloc[-1]
         close = latest["Close"]
 
         # 52 週高値・安値との位置関係を計算
         if pct_from_low is None or pct_from_high is None:
             window = 252  # ≒ 52 週
-            rolling_high = self.df["Close"].rolling(window=window).max()
-            rolling_low = self.df["Close"].rolling(window=window).min()
-            if pct_from_low is None:
-                pct_from_low = (close - rolling_low.iloc[-1]) / rolling_low.iloc[-1] * 100
-            if pct_from_high is None:
-                pct_from_high = (rolling_high.iloc[-1] - close) / rolling_high.iloc[-1] * 100
+            rolling_high = self.df["Close"].rolling(window=window).max().iloc[-1]
+            rolling_low = self.df["Close"].rolling(window=window).min().iloc[-1]
 
+            # ゼロ除算を防止
+            if rolling_low <= 0 or rolling_high <= 0:
+                return False
+
+            if pct_from_low is None:
+                pct_from_low = (close - rolling_low) / rolling_low * 100
+            if pct_from_high is None:
+                pct_from_high = (rolling_high - close) / rolling_high * 100
+
+        # トレンドテンプレート8条件
         conditions = [
-            close > latest["MA150"] > 0,
-            close > latest["MA200"] > 0,
+            # 1. 現在の株価 > 150日MA and 200日MA
+            close > latest["MA150"] and close > latest["MA200"],
+            # 2. 150日MA > 200日MA
             latest["MA150"] > latest["MA200"],
+            # 3. 200日MAが少なくとも1ヶ月間上昇トレンド
             self._ma200_is_rising(ma200_lookback),
+            # 4. 50日MA > 150日MA and 200日MA
             latest["MA50"] > latest["MA150"] and latest["MA50"] > latest["MA200"],
+            # 5. 現在の株価 > 50日MA
             close > latest["MA50"],
-            pct_from_low >= 30,   # 52 週安値から +30%以上
-            pct_from_high <= 25,  # 52 週高値から -25%以内
-            rs_rating >= 70,      # RS レーティング 70 以上
+            # 6. 現在の株価が52週安値から30%以上高い
+            pct_from_low >= 30,
+            # 7. 現在の株価が52週高値から25%以内
+            pct_from_high <= 25,
         ]
 
         return all(conditions)

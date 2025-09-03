@@ -17,10 +17,14 @@ FMP_API_KEY : str
 
 from __future__ import annotations
 
+import logging
 import os
-import requests
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
+import pandas as pd
+import requests
+
+logger = logging.getLogger(__name__)
 
 class FundamentalFilter:
     """
@@ -30,8 +34,8 @@ class FundamentalFilter:
         ティッカー (例: "AAPL")
     provider : str, default "fmp"
         "fmp" or "yfinance"
-    limit : int, default 4
-        過去何四半期ぶん取得するか
+    limit : int, default 5
+        過去何四半期ぶん取得するか。YoY成長率の計算には最低5四半期が必要。
     """
 
     FMP_EPS_URL = (
@@ -44,7 +48,7 @@ class FundamentalFilter:
         "ratios/{symbol}?limit={limit}&apikey={key}"
     )
 
-    def __init__(self, symbol: str, provider: str = "fmp", limit: int = 4) -> None:
+    def __init__(self, symbol: str, provider: str = "fmp", limit: int = 5) -> None:
         self.symbol = symbol.upper()
         self.provider = provider
         self.limit = limit
@@ -59,7 +63,7 @@ class FundamentalFilter:
         # 内部キャッシュ
         self._eps_quarter: Optional[List[float]] = None
         self._sales_quarter: Optional[List[float]] = None
-        self._gross_margin: Optional[float] = None
+        self._gross_margin_history: Optional[List[float]] = None
 
     # ──────────────────────────────
     # 公開 API
@@ -68,30 +72,38 @@ class FundamentalFilter:
         self,
         eps_growth_qtr_threshold: float = 25.0,
         sales_growth_qtr_threshold: float = 20.0,
-        margin_improve_required: bool = True,
+        margin_improves_sequentially: bool = True,
     ) -> bool:
         """
         SEPA のファンダ条件を満たすか判定。
+
+        Parameters
+        ----------
+        eps_growth_qtr_threshold : float
+            最新四半期のEPSのYoY成長率(%)の下限値
+        sales_growth_qtr_threshold : float
+            最新四半期の売上高のYoY成長率(%)の下限値
+        margin_improves_sequentially : bool
+            利益率が前期比で改善していることを要求するか
 
         Returns
         -------
         bool
             すべての基準を満たせば True
         """
-        eps_growth = self._calc_growth_rates(self.eps_quarter)
-        sales_growth = self._calc_growth_rates(self.sales_quarter)
+        eps_growth = self._calc_yoy_growth_rates(self.eps_quarter)
+        if not eps_growth or pd.isna(eps_growth[-1]) or eps_growth[-1] < eps_growth_qtr_threshold:
+            return False
 
-        conditions = [
-            eps_growth[-1] >= eps_growth_qtr_threshold,
-            sales_growth[-1] >= sales_growth_qtr_threshold,
-        ]
+        sales_growth = self._calc_yoy_growth_rates(self.sales_quarter)
+        if not sales_growth or pd.isna(sales_growth[-1]) or sales_growth[-1] < sales_growth_qtr_threshold:
+            return False
 
-        if margin_improve_required and self.gross_margin is not None:
-            # 最新四半期の粗利率が過去平均を上回るか
-            past_avg = sum(self._gross_margin_history[:-1]) / (len(self._gross_margin_history) - 1)
-            conditions.append(self.gross_margin >= past_avg)
+        if margin_improves_sequentially:
+            if len(self.gross_margin_history) < 2 or self.gross_margin_history[0] <= self.gross_margin_history[1]:
+                return False
 
-        return all(conditions)
+        return True
 
     # ──────────────────────────────
     # プロパティ（API アクセス）
@@ -109,40 +121,68 @@ class FundamentalFilter:
         return self._sales_quarter  # type: ignore
 
     @property
-    def gross_margin(self) -> Optional[float]:
-        if self._gross_margin is None:
+    def gross_margin_history(self) -> List[float]:
+        if self._gross_margin_history is None:
             self._fetch_financials()
-        return self._gross_margin  # type: ignore
+        return self._gross_margin_history  # type: ignore
 
     # ──────────────────────────────
     # 内部ユーティリティ
     # ──────────────────────────────
     def _fetch_financials(self) -> None:
         """FMP から四半期 EPS、売上高、粗利率を取得してキャッシュ"""
-        url = self.FMP_EPS_URL.format(symbol=self.symbol, limit=self.limit, key=self.api_key)
-        resp = requests.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+        # キャッシュを空リストで初期化
+        self._eps_quarter = []
+        self._sales_quarter = []
+        self._gross_margin_history = []
 
-        # EPS, 売上 (単位: USD), 最新が 0 番目
-        self._eps_quarter = [q["eps"] for q in data][: self.limit]
-        self._sales_quarter = [q["revenue"] for q in data][: self.limit]
+        try:
+            # --- 損益計算書 (EPS, 売上) ---
+            url_income = self.FMP_EPS_URL.format(
+                symbol=self.symbol, limit=self.limit, key=self.api_key
+            )
+            resp_income = requests.get(url_income, timeout=15)
+            resp_income.raise_for_status()
+            income_data = resp_income.json()
 
-        # マージン別 API
-        url_margin = self.FMP_MARGIN_URL.format(symbol=self.symbol, limit=self.limit, key=self.api_key)
-        resp_m = requests.get(url_margin, timeout=15)
-        resp_m.raise_for_status()
-        ratios = resp_m.json()
-        self._gross_margin_history = [r["grossProfitMargin"] for r in ratios][: self.limit]
-        self._gross_margin = self._gross_margin_history[0] if self._gross_margin_history else None
+            if not isinstance(income_data, list):
+                logger.warning("FMPから予期せぬ形式のデータ(income)を受信: %s", self.symbol)
+                return
+
+            self._eps_quarter = [q.get("eps") for q in income_data if q.get("eps") is not None]
+            self._sales_quarter = [q.get("revenue") for q in income_data if q.get("revenue") is not None]
+
+            # --- 利益率 ---
+            url_margin = self.FMP_MARGIN_URL.format(
+                symbol=self.symbol, limit=self.limit, key=self.api_key
+            )
+            resp_margin = requests.get(url_margin, timeout=15)
+            resp_margin.raise_for_status()
+            margin_data = resp_margin.json()
+
+            if not isinstance(margin_data, list):
+                logger.warning("FMPから予期せぬ形式のデータ(margin)を受信: %s", self.symbol)
+                return
+
+            self._gross_margin_history = [
+                r.get("grossProfitMargin") for r in margin_data if r.get("grossProfitMargin") is not None
+            ]
+
+        except requests.exceptions.RequestException as e:
+            logger.error("FMP APIへのリクエストに失敗: %s, %s", self.symbol, e)
+        except (KeyError, IndexError, TypeError) as e:
+            logger.error("FMP APIレスポンスの解析に失敗: %s, %s", self.symbol, e)
 
     @staticmethod
-    def _calc_growth_rates(values: List[float]) -> List[float]:
-        """連続する四半期の前年比成長率 (%) を返す（最新が末尾）"""
-        growth = []
-        for i in range(1, len(values)):
-            if values[i - 1] == 0:
-                growth.append(0.0)
-            else:
-                growth.append((values[i - 1] - values[i]) / abs(values[i]) * 100)
-        return growth[::-1]  # 最新四半期を最後に
+    def _calc_yoy_growth_rates(values: Optional[List[float]]) -> List[float]:
+        """
+        四半期データのリストから前年同期比 (YoY) 成長率のリストを計算する。
+        入力リストは最新の四半期が先頭にあることを前提とする。
+        出力リストは最新の成長率が末尾に来るように並べられる。
+        """
+        if not values or len(values) < 5:
+            return []
+
+        s = pd.Series(values, dtype=float)
+        yoy_growth = (s / s.shift(-4) - 1) * 100
+        return yoy_growth.dropna().tolist()[::-1]

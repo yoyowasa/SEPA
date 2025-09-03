@@ -16,12 +16,14 @@ SEPA スクリーナーを実行し、基準を満たした銘柄リストを
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime as dt
+import logging
 from pathlib import Path
 from typing import List
+
+import pandas as pd
 from dotenv import load_dotenv
-load_dotenv()            # ← .env があれば自動で環境変数に展開
+load_dotenv()  # .env があれば自動で環境変数に展開
 
 from sepa_trade.pipeline.screener import SepaScreener
 
@@ -47,46 +49,53 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def load_tickers_from_csv(path: Path) -> List[str]:
-    tickers: List[str] = []
-    with path.open(newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if row:
-                tickers.append(row[0].strip())
-    return tickers
+def load_tickers(path: Path) -> List[str]:
+    """Loads tickers from a single-column CSV file, cleaning them up."""
+    return (
+        pd.read_csv(path, header=None)
+        .iloc[:, 0]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .tolist()
+    )
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logger = logging.getLogger(__name__)
+
     args = parse_args()
 
     if args.tickers_file:
-        universe = load_tickers_from_csv(args.tickers_file)
+        universe = load_tickers(args.tickers_file)
     elif args.tickers:
         universe = args.tickers
     else:
-        raise SystemExit("エラー: ティッカーを指定するか --tickers-file を渡してください。")
+        logger.error("エラー: ティッカーを直接指定するか --tickers-file を使用してください。")
+        raise SystemExit(1)
 
-    print(f"Universe Size: {len(universe)} tickers")
+    logger.info(f"Universe Size: {len(universe)} tickers")
     screener = SepaScreener(universe)
     winners = screener.screen()
 
     # 表示
     if winners:
-        print("=== SEPA 条件を満たした銘柄 ===")
-        print(", ".join(winners))
+        logger.info("=== SEPA 条件を満たした銘柄 ===")
+        logger.info(", ".join(winners))
     else:
-        print("該当なし")
+        logger.info("該当なし")
 
     # CSV 保存
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with args.output.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["generated_at", timestamp])
-        writer.writerow(winners)
+    df_winners = pd.DataFrame(winners, columns=["ticker"])
+    df_winners.to_csv(args.output, index=False)
 
-    print(f"\n結果を {args.output} に保存しました。")
+    logger.info(f"\n結果を {args.output} に保存しました。")
 
 
 if __name__ == "__main__":

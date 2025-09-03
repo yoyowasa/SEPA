@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-from typing import List
 
 import yfinance as yf
 from backtesting import Backtest, Strategy
@@ -26,9 +25,7 @@ import pandas as pd
 
 from sepa_trade.technical_weekly import WeeklyTrendTemplate
 from sepa_trade.technical import TrendTemplate
-from sepa_trade.rs import compute_rs_universe
 from sepa_trade.strategy.vcp_breakout import VCPStrategy
-from sepa_trade.strategy.exit_rules import ExitStrategy
 
 # ───────────────────────────────────────────
 # CLI
@@ -44,59 +41,80 @@ def parse_args() -> argparse.Namespace:
 # Strategy クラス
 # ───────────────────────────────────────────
 class VCPBacktestStrategy(Strategy):
+    # --- 戦略パラメータ ---
     ATR_MULT_EXIT = 2.0
+    RISK_PER_TRADE = 0.01  # 資産の1%をリスクに晒す
+    W52 = 252              # 52週の日数
 
     def init(self) -> None:
-        # ATR(10) と EMA10 を事前計算
-        high = pd.Series(self.data.High)
-        low = pd.Series(self.data.Low)
-        close = pd.Series(self.data.Close)
-        tr = pd.concat(
-            [
-                high - low,
-                (high - close.shift()).abs(),
-                (low - close.shift()).abs(),
-            ],
-            axis=1,
-        ).max(axis=1)
-        self.atr10 = self.I(lambda x: x.rolling(10).mean(), tr)
-        self.ema10 = self.I(lambda x: x.ewm(span=10, adjust=False).mean(), close)
+        """インジケータを事前に計算"""
+        # ATR(10): 元のコードと同様にTrue Rangeの単純移動平均を使用
+        high, low, close = self.data.High, self.data.Low, self.data.Close
+        tr_df = pd.DataFrame({
+            'h_l': high - low,
+            'h_pc': (high - close.shift()).abs(),
+            'l_pc': (low - close.shift()).abs()
+        })
+        true_range = tr_df.max(axis=1)
+        self.atr10 = self.I(lambda x: pd.Series(x).rolling(10).mean(), true_range, name="ATR10")
+
+        # EMA(10)
+        self.ema10 = self.I(lambda x: pd.Series(x).ewm(span=10, adjust=False).mean(), self.data.Close, name="EMA10")
 
     def next(self) -> None:
+        """各時間足で実行されるメインロジック"""
         price = self.data.Close[-1]
 
-        # エントリー済み: EXIT 判定
+        # --- 1. EXITロジック ---
+        # ポジションがある場合、まずエグジット条件をチェック
         if self.position:
             entry_price = self.position.avg_price
-            if (
-                price < entry_price - self.atr10[-1] * self.ATR_MULT_EXIT
-                or crossover(self.ema10, self.data.Close)
-            ):
+            # ATRトレイリングストップ、または終値がEMA10をクロスして下回った場合に手仕舞い
+            atr_stop_price = entry_price - self.atr10[-1] * self.ATR_MULT_EXIT
+            if price < atr_stop_price or crossover(self.ema10, self.data.Close):
                 self.position.close()
             return
 
-        # ===== 週足フィルター =====
-        df = self.data.df
-        weekly = df["Close"].resample("W-FRI").last().to_frame(name="Close")
-        rs = 80  # ダミー高 RS（個別銘柄で計算省略）
-        w_ok = WeeklyTrendTemplate(weekly).passes(rs_rating=rs)
-        if not w_ok:
+        # --- 2. ENTRYロジック ---
+        # 52週分のデータがなければエントリーしない
+        if len(self.data.Close) < self.W52:
             return
 
-        # ===== 日足テンプレ =====
-        d_template = TrendTemplate(df["Close"].to_frame(name="Close"))
-        pct_low = (price - df["Close"].rolling(52 * 5).min().iloc[-1]) / df["Close"].rolling(52 * 5).min().iloc[-1] * 100
-        pct_high = (df["Close"].rolling(52 * 5).max().iloc[-1] - price) / df["Close"].rolling(52 * 5).max().iloc[-1] * 100
-        if not d_template.passes(rs_rating=rs, pct_from_low=pct_low, pct_from_high=pct_high):
+        # ルックアヘッドバイアスを避けるため、現在までのデータでDataFrameを作成
+        current_df = self.data.df.iloc[:len(self.data)]
+
+        # ===== 2a. 週足フィルター =====
+        weekly_close = current_df["Close"].resample("W-FRI").last()
+        if len(weekly_close) < 41:  # 40週MAの計算に十分な期間が必要
+            return
+        weekly_df = weekly_close.to_frame(name="Close")
+        rs_dummy = 80  # 個別銘柄のバックテストではRSは計算困難なためダミー値を使用
+        if not WeeklyTrendTemplate(weekly_df).passes(rs_rating=rs_dummy):
             return
 
-        # ===== VCP ブレイク =====
-        vcp = VCPStrategy(df)
+        # ===== 2b. 日足トレンドテンプレート =====
+        # 52週高値/安値からの乖離率を計算
+        rolling_min_52w = current_df["Close"].rolling(self.W52).min().iloc[-1]
+        rolling_max_52w = current_df["Close"].rolling(self.W52).max().iloc[-1]
+        pct_from_low = (price - rolling_min_52w) / rolling_min_52w * 100
+        pct_from_high = (rolling_max_52w - price) / rolling_max_52w * 100
+
+        if not TrendTemplate(current_df[["Close"]]).passes(
+            rs_rating=rs_dummy, pct_from_low=pct_from_low, pct_from_high=pct_from_high
+        ):
+            return
+
+        # ===== 2c. VCP ブレイクアウト =====
+        vcp = VCPStrategy(current_df)
         entry, sig = vcp.check_today()
         if entry and sig:
-            size = int(self.equity * 0.01 / (sig.atr * 1.5))
+            # ポジションサイズを計算
+            risk_per_share = sig.atr * 1.5
+            if risk_per_share <= 0:
+                return
+            size = int(self.equity * self.RISK_PER_TRADE / risk_per_share)
             if size > 0:
-                self.buy(size=size, sl=price - sig.atr * 1.5)
+                self.buy(size=size, sl=price - risk_per_share)
 
 
 # ───────────────────────────────────────────
@@ -104,12 +122,13 @@ class VCPBacktestStrategy(Strategy):
 # ───────────────────────────────────────────
 def main() -> None:
     args = parse_args()
-    start = dt.date.today() - dt.timedelta(days=365 * args.years)
 
     for tic in args.tickers:
-        df = yf.download(tic, start=start.isoformat(), auto_adjust=False)
-        if len(df) < 200:
-            print(f"Skip {tic}: insufficient data")
+        print(f"\n--- バックテスト開始: {tic} ({args.years}年分) ---")
+        # auto_adjust=Trueで調整済み株価を取得
+        df = yf.download(tic, period=f"{args.years}y", auto_adjust=True, progress=False)
+        if df.empty or len(df) < VCPBacktestStrategy.W52:
+            print(f"スキップ: データ不足 (期間: {len(df)}日)")
             continue
 
         bt = Backtest(
@@ -121,9 +140,9 @@ def main() -> None:
             trade_on_close=True,
         )
         stats = bt.run()
-        print(f"=== {tic} ===")
-        print(stats[["Return [%]", "Win Rate [%]", "Max. Drawdown [%]"]])
-        # グラフを見たい場合: bt.plot()
+        print(stats)
+        # グラフをブラウザで表示したい場合は以下のコメントを解除
+        # bt.plot()
 
 
 if __name__ == "__main__":

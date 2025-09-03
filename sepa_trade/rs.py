@@ -33,8 +33,13 @@ def calc_percent_return(close: pd.Series, lookback: int = 126) -> float:
     """
     if len(close) < lookback + 1:
         raise ValueError("データ不足: close の長さが lookback+1 未満です。")
+
     past_price = close.iloc[-lookback - 1]
     latest_price = close.iloc[-1]
+
+    if past_price <= 0:
+        return float("nan")  # ゼロ除算を防止
+
     return (latest_price / past_price - 1) * 100
 
 
@@ -78,9 +83,27 @@ def compute_rs_universe(
     pd.Series
         index=ティッカー、values=RS レーティング (0–100)
     """
-    pct_returns = {
-        ticker: calc_percent_return(series, lookback=lookback)
-        for ticker, series in close_dict.items()
-    }
-    pct_series = pd.Series(pct_returns)
-    return calc_rs_rating(pct_series)
+    # 1. 辞書から DataFrame を作成
+    # 銘柄ごとに日付インデックスが異なる場合があるため、
+    # pd.DataFrame() よりも pd.concat() の方が堅牢。
+    # 各 Series を列として連結し、インデックスの和集合を自動的に作成する。
+    all_closes = pd.concat(close_dict, axis=1)
+
+    # 2. lookback 期間に対してデータが不足している銘柄を除外
+    #    (各列で非NaN値が lookback+1 個未満のものを削除)
+    valid_closes = all_closes.dropna(axis="columns", thresh=lookback + 1)
+    if valid_closes.empty:
+        return pd.Series(dtype=float).reindex(all_closes.columns)
+
+    # 3. 期間リターンをベクトル演算で一括計算
+    past_prices = valid_closes.iloc[-lookback - 1]
+    latest_prices = valid_closes.iloc[-1]
+
+    # ゼロ除算を防止
+    past_prices[past_prices <= 0] = float("nan")
+
+    pct_returns = (latest_prices / past_prices - 1) * 100
+
+    # 4. RS レーティングを計算し、元のユニバースの形に戻す
+    rs = calc_rs_rating(pct_returns)
+    return rs.reindex(all_closes.columns)
