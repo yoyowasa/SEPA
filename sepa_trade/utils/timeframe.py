@@ -24,42 +24,36 @@ def load_daily(ticker: str, years: int = 5) -> pd.DataFrame:
 
 def daily_to_weekly(close_like) -> pd.DataFrame:
     """
-    日足 Series / DataFrame → 週足終値 DataFrame("Close"1列)
+    日足 Series / DataFrame を週足終値 DataFrame ("Close"1列) に変換する。
     ・週末＝金曜終値
     ・未確定週を除外
     ・欠損は前方補完
     """
-    import pandas as pd
 
     # --- 1) Close 列を Series に抽出 ----------------------------
     if isinstance(close_like, pd.Series):
         close_series = close_like
+    else:
+        df = close_like.copy()
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        cols = list(df.columns)
 
-    else:  # DataFrame
-        cols = list(close_like.columns)
-
-        # MultiIndex → 先頭レベルを平坦化
-        if isinstance(close_like.columns, pd.MultiIndex):
-            close_like = close_like.copy()
-            close_like.columns = close_like.columns.get_level_values(0)
-            cols = list(close_like.columns)
-
-        if "Close" in cols:
-            close_series = close_like["Close"]
-        elif "Adj Close" in cols:
-            close_series = close_like["Adj Close"]
-        elif any(c.startswith("Close") for c in cols):
-            use_col = [c for c in cols if c.startswith("Close")][0]
-            close_series = close_like[use_col]
-        else:
+        # 優先順に Close 列名を特定
+        close_col = next((c for c in ("Close", "Adj Close") if c in cols), None)
+        if close_col is None:
+            close_col = next((c for c in cols if c.startswith("Close")), None)
+        if close_col is None:
             raise ValueError("Close 列を特定できません")
+
+        close_series = df[close_col]
 
     # --- 2) 週足変換 -------------------------------------------
     weekly = (
         close_series.resample("W-FRI").last()  # 金曜終値
-                   .ffill()                    # 欠損補完
-                   .iloc[:-1]                  # 未確定週を除外
-                   .to_frame("Close")
+        .ffill()                                # 欠損補完
+        .iloc[:-1]                              # 未確定週を除外
+        .to_frame("Close")
     )
     return weekly
 
