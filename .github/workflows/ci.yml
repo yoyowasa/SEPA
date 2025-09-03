@@ -1,26 +1,46 @@
-name: CI
+name: ci
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      # GitHub SecretsからAPIキーを環境変数として設定
-      FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      # 1) ここで 3.11 をセット（これが最重要）
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
 
-      - name: Install dependencies & run tests
+      # 2) Poetry を pipx で入れる（3.11 環境上に入る）
+      - name: Install Poetry
+        run: pipx install poetry==2.1.4
+
+      # 3) Poetry の設定（プロジェクト内 .venv を使う）
+      - name: Configure Poetry
         run: |
-          pip install --upgrade pip
-          pip install poetry
-          # dev グループも含めてインストール
-          poetry install --with dev
-          # テスト実行
-          poetry run pytest
+          poetry config virtualenvs.in-project true
+          poetry env use python   # setup-python の python を使わせる
+
+      # 4) キャッシュ（任意だけど高速化に有効）
+      - name: Cache poetry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pypoetry
+            .venv
+          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-
+
+      # 5) 依存インストール
+      - name: Install deps
+        run: poetry install --no-interaction --no-ansi
+
+      # 6) テスト等
+      - name: Run tests
+        run: poetry run pytest -q
