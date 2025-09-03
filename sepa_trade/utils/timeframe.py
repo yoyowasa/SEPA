@@ -37,16 +37,15 @@ def daily_to_weekly(close_like) -> pd.DataFrame:
         df = close_like.copy()
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-        cols = list(df.columns)
 
-        # 優先順に Close 列名を特定
-        close_col = next((c for c in ("Close", "Adj Close") if c in cols), None)
-        if close_col is None:
-            close_col = next((c for c in cols if c.startswith("Close")), None)
-        if close_col is None:
-            raise ValueError("Close 列を特定できません")
-
-        close_series = df[close_col]
+        # "Close" / "Adj Close" の優先順で列を取得し、なければ "Close" で始まる列の先頭を使う
+        try:
+            close_series = df[["Close", "Adj Close"]].iloc[:, 0]
+        except KeyError:
+            close_cols = [c for c in df.columns if c.startswith("Close")]
+            if not close_cols:
+                raise ValueError("Close 列を特定できません")
+            close_series = df[close_cols[0]]
 
     # --- 2) 週足変換 -------------------------------------------
     weekly = (
